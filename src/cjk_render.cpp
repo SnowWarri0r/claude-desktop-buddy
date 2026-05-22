@@ -75,21 +75,33 @@ static void drawGb2312(TFT_eSprite* spr, uint8_t b1, uint8_t b2, int x, int y,
 void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
                   uint16_t color, uint16_t bgcolor) {
   if (spr == nullptr || text == nullptr) return;
+  // Stop rendering once the next glyph wouldn't fit horizontally. Without
+  // this guard, drawPixel calls keep going off the right edge and the text
+  // looks like it's running off-screen even though only the visible
+  // portion is fed to the LCD.
+  const int max_right = spr->width();
   const uint8_t* p = reinterpret_cast<const uint8_t*>(text);
   int cx = x;
   while (*p) {
-    if (isGbkLead(p)) {
-      drawGb2312(spr, p[0], p[1], cx, y, color, bgcolor);
-      cx += GBK_W;
-      p  += 2;
+    int glyph_w;
+    int advance;
+    bool is_gbk = isGbkLead(p);
+    if (is_gbk) {
+      glyph_w = GBK_W;
+      advance = 2;
     } else if (*p == '\n' || *p == '\r') {
       // Newlines are layout decisions for the caller — ignore inline.
       p++;
+      continue;
     } else {
-      drawAsc16(spr, *p, cx, y, color, bgcolor);
-      cx += ASC_W;
-      p  += 1;
+      glyph_w = ASC_W;
+      advance = 1;
     }
+    if (cx + glyph_w > max_right) break;   // would overflow — stop cleanly.
+    if (is_gbk) drawGb2312(spr, p[0], p[1], cx, y, color, bgcolor);
+    else        drawAsc16(spr, *p, cx, y, color, bgcolor);
+    cx += glyph_w;
+    p  += advance;
   }
 }
 
