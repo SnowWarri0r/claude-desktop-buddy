@@ -30,4 +30,17 @@ void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
 // horizontal centering / overflow checks.
 int  cjkMeasureMixed(const char* text);
 
+// Maximum NUL-terminated bytes per wrapped output row. Tight upper bound:
+// 16 ASCII chars × 1 byte = 16, plus null = 17; for GBK at 8 chars × 2
+// bytes = 16; pad to 24 for slack against odd input.
+#define CJK_ROW_CAP 24
+
+// Pixel- and GBK-aware wrap. Splits `in` into rows of ≤ `maxPx` pixels each,
+// never breaking a GBK 2-byte pair. Each row in `out` is NUL-terminated.
+// Returns the number of rows actually written. ASCII chars count 8 px wide,
+// GBK pairs 16 px wide. Hard-break: no word-aware logic — breaks at the
+// exact glyph that wouldn't fit.
+uint8_t cjkWrapInto(const char* in, char out[][CJK_ROW_CAP],
+                    uint8_t maxRows, int maxPx);
+
 #endif

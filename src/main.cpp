@@ -906,10 +906,12 @@ void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
 #ifdef CC_BUDDY_CJK_DISPLAY
-  // CJK glyphs are 16 px tall — no wrap; each transcript line gets its own
-  // visual row, clipped horizontally at the sprite edge. Skips wrapInto
-  // entirely because byte-based wrap math would split GBK pairs mid-codepoint.
-  const int SHOW = 3, LH = 16;
+  // CJK glyphs are 16 px tall (vs 5x7 default's 8 px line height). A long
+  // entry with the HH:MM prefix typically wraps to 3-4 rows; bump SHOW so
+  // the timestamp row doesn't scroll off whenever an entry needs to wrap.
+  // 4×16+4 = 68 px area (vs 28 px ASCII) — costs ~16 px off the GIF
+  // character's vertical room. Acceptable for the CJK build.
+  const int SHOW = 4, LH = 16;
 #else
   const int SHOW = 3, LH = 8, WIDTH = 21;
 #endif
@@ -931,17 +933,33 @@ void drawHUD() {
   }
 
 #ifdef CC_BUDDY_CJK_DISPLAY
-  // Each tama.lines[i] is rendered on its own row — no wrap, no display buffer.
-  uint8_t maxBack = (tama.nLines > SHOW) ? (tama.nLines - SHOW) : 0;
+  // CJK pixel-aware wrap into a flat display buffer, then render last SHOW
+  // rows. Mirrors the ASCII path's wrapInto + disp[] flow so msgScroll and
+  // newest-highlight behave identically.
+  static char disp_cjk[16][CJK_ROW_CAP];
+  static uint8_t srcOf[16];
+  // x=4 origin means we get W-4 = 131 px of usable width before glyphs would
+  // extend past the sprite's right edge. cjkDrawMixed itself stops one glyph
+  // short of that boundary, so handing this same number to cjkWrapInto keeps
+  // wrap and render math consistent.
+  const int max_px = W - 4;
+  uint8_t nDisp = 0;
+  for (uint8_t i = 0; i < tama.nLines && nDisp < 16; i++) {
+    uint8_t got = cjkWrapInto(tama.lines[i], &disp_cjk[nDisp],
+                              16 - nDisp, max_px);
+    for (uint8_t j = 0; j < got; j++) srcOf[nDisp + j] = i;
+    nDisp += got;
+  }
+  uint8_t maxBack = (nDisp > SHOW) ? (nDisp - SHOW) : 0;
   if (msgScroll > maxBack) msgScroll = maxBack;
-  int end = (int)tama.nLines - msgScroll;
+  int end = (int)nDisp - msgScroll;
   int start = end - SHOW; if (start < 0) start = 0;
   uint8_t newest = tama.nLines - 1;
   for (int i = 0; start + i < end; i++) {
     uint8_t row = start + i;
-    bool fresh = (row == newest) && (msgScroll == 0);
+    bool fresh = (srcOf[row] == newest) && (msgScroll == 0);
     uint16_t color = fresh ? p.text : p.textDim;
-    cjkDrawMixed(&spr, tama.lines[row], 4, H - AREA + 2 + i * LH, color, p.bg);
+    cjkDrawMixed(&spr, disp_cjk[row], 4, H - AREA + 2 + i * LH, color, p.bg);
   }
 #else
   // Wrap all transcript lines into a flat display buffer. Track which

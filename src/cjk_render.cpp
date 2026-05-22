@@ -75,10 +75,8 @@ static void drawGb2312(TFT_eSprite* spr, uint8_t b1, uint8_t b2, int x, int y,
 void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
                   uint16_t color, uint16_t bgcolor) {
   if (spr == nullptr || text == nullptr) return;
-  // Stop rendering once the next glyph wouldn't fit horizontally. Without
-  // this guard, drawPixel calls keep going off the right edge and the text
-  // looks like it's running off-screen even though only the visible
-  // portion is fed to the LCD.
+  // Stop rendering once the next glyph wouldn't fit horizontally. Callers
+  // that want multi-row layout should pre-wrap via cjkWrapInto.
   const int max_right = spr->width();
   const uint8_t* p = reinterpret_cast<const uint8_t*>(text);
   int cx = x;
@@ -90,19 +88,76 @@ void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
       glyph_w = GBK_W;
       advance = 2;
     } else if (*p == '\n' || *p == '\r') {
-      // Newlines are layout decisions for the caller — ignore inline.
       p++;
       continue;
     } else {
       glyph_w = ASC_W;
       advance = 1;
     }
-    if (cx + glyph_w > max_right) break;   // would overflow — stop cleanly.
+    if (cx + glyph_w > max_right) break;
     if (is_gbk) drawGb2312(spr, p[0], p[1], cx, y, color, bgcolor);
     else        drawAsc16(spr, *p, cx, y, color, bgcolor);
     cx += glyph_w;
     p  += advance;
   }
+}
+
+
+uint8_t cjkWrapInto(const char* in, char out[][CJK_ROW_CAP],
+                    uint8_t maxRows, int maxPx) {
+  if (in == nullptr || maxRows == 0) return 0;
+  const uint8_t* p = reinterpret_cast<const uint8_t*>(in);
+  uint8_t row = 0;
+  uint16_t col_bytes = 0;
+  int cx = 0;
+  while (*p && row < maxRows) {
+    int glyph_w;
+    int advance;
+    if (isGbkLead(p)) {
+      glyph_w = GBK_W;
+      advance = 2;
+    } else if (*p == '\n' || *p == '\r') {
+      // Newline forces a wrap *now*, then skip the literal byte.
+      out[row][col_bytes] = 0;
+      row++;
+      if (row >= maxRows) return row;
+      col_bytes = 0;
+      cx = 0;
+      p++;
+      continue;
+    } else {
+      glyph_w = ASC_W;
+      advance = 1;
+    }
+    // Two break conditions: pixel overflow, or output-buffer overflow. Both
+    // finalise the current row without consuming the current input glyph
+    // — it goes onto the next row instead.
+    if (cx + glyph_w > maxPx ||
+        (uint16_t)(col_bytes + advance) >= (uint16_t)(CJK_ROW_CAP - 1)) {
+      out[row][col_bytes] = 0;
+      row++;
+      if (row >= maxRows) return row;
+      col_bytes = 0;
+      cx = 0;
+      // Edge case: single glyph wider than the entire usable width. Drop
+      // it to avoid an infinite loop. Practically impossible (16 ≤ maxPx
+      // for any realistic HUD area) but keep the guard.
+      if (cx + glyph_w > maxPx) {
+        p += advance;
+        continue;
+      }
+    }
+    for (int i = 0; i < advance; i++) {
+      out[row][col_bytes++] = (char)p[i];
+    }
+    cx += glyph_w;
+    p += advance;
+  }
+  if (col_bytes > 0 && row < maxRows) {
+    out[row][col_bytes] = 0;
+    row++;
+  }
+  return row;
 }
 
 int cjkMeasureMixed(const char* text) {

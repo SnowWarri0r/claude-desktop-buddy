@@ -1,14 +1,17 @@
-"""Extract GB2312 Level 1 (3755 common hanzi) from M5StickCPlus's HZK16.h.
+"""Extract a usable GB2312 subset from M5StickCPlus's HZK16.h.
 
-The bundled HZK16 covers ~8363 glyphs over the full 94×94 GBK grid. We only
-need Level 1 — zones 16-55 (40 zones × 94 positions = 3760 glyphs at 32
-bytes each = 120 KB) which covers 99%+ of daily Mandarin use. Generates a
-PROGMEM array and a bounds-checked lookup macro that maps (b1, b2) GBK byte
-pairs to a glyph pointer.
+The bundled HZK16 covers ~8363 glyphs over the full 94×94 GBK grid. We don't
+want the whole thing (~270 KB) but we *do* need more than just Level 1
+hanzi: most daily Chinese content has full-width punctuation (zone 1),
+full-width ASCII (zone 3), kana (zones 4-5), and similar symbols that all
+live in zones 1-9. Without those, '，' '。' '！' '？' '、' '…' all render
+as the fallback '??'.
 
-The 5 unused 'gaps' in those 3760 entries (Level 1 actually has 3755 chars;
-positions 56-94 of zone 55 are reserved) come along for the ride as zero
-bytes — simpler than a sparse layout.
+Shipped: zones 1-55 = symbols/punctuation (1-9) + reserved 10-15 (zero
+glyphs, ~45 KB of zeros) + Level 1 hanzi (16-55). 55 × 94 × 32 ≈ 162 KB.
+
+Naming kept as ``GB2312_L1`` for backward compat with the original commit;
+the content scope is documented here.
 """
 
 import re
@@ -18,11 +21,9 @@ from pathlib import Path
 SRC = Path("/Users/snow/claude-desktop-buddy/.pio/libdeps/m5stickc-plus/M5StickCPlus/src/Fonts/HZK16.h")
 DST = Path("/Users/snow/claude-desktop-buddy/src/Fonts/GB2312_L1.h")
 
-# Level 1 GB2312: zones 16-55 (40 zones), positions 1-94 each.
-# Source HZK16 is laid out as: offset = (zone-1)*94*32 + (pos-1)*32
-# We slice from offset (16-1)*94*32 = 45120 to offset (55)*94*32 = 165440.
-ZONE_START = 16   # inclusive
-ZONE_END   = 56   # exclusive  (zones 16..55)
+# GB2312 zones 1-55: symbols + Level 1 hanzi (incl. zero-filled reserved 10-15).
+ZONE_START = 1    # inclusive
+ZONE_END   = 56   # exclusive  (zones 1..55)
 BYTES_PER_GLYPH = 32
 GLYPHS_PER_ZONE = 94
 
