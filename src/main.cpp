@@ -906,12 +906,11 @@ void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
 #ifdef CC_BUDDY_CJK_DISPLAY
-  // CJK glyphs are 16 px tall (vs 5x7 default's 8 px line height). A long
-  // entry with the HH:MM prefix typically wraps to 3-4 rows; bump SHOW so
-  // the timestamp row doesn't scroll off whenever an entry needs to wrap.
-  // 4×16+4 = 68 px area (vs 28 px ASCII) — costs ~16 px off the GIF
-  // character's vertical room. Acceptable for the CJK build.
-  const int SHOW = 4, LH = 16;
+  // CJK glyphs (Fusion Pixel Font 12px monospaced): 12 px tall vs the 5x7
+  // default font's 8 px line height. SHOW=4 → 4×12+4 = 52 px area (was 68 px
+  // when CJK glyphs were 16 px). Brings the GIF character's vertical real
+  // estate roughly back to where it was in stock firmware.
+  const int SHOW = 4, LH = 12;
 #else
   const int SHOW = 3, LH = 8, WIDTH = 21;
 #endif
