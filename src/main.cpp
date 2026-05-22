@@ -5,6 +5,9 @@
 #include "battery.h"
 #include "data.h"
 #include "buddy.h"
+#ifdef CC_BUDDY_CJK_DISPLAY
+#include "cjk_render.h"
+#endif
 
 TFT_eSprite spr = TFT_eSprite(&M5.Lcd);
 
@@ -738,6 +741,14 @@ static void drawApproval() {
   if (waited >= 10) spr.setTextColor(HOT, p.bg);
   spr.printf("approve? %lus", (unsigned long)waited);
 
+  // Tool name + hint. In the CJK build these may contain GBK byte pairs
+  // (16x16 each) on top of plain ASCII (8x16); we always render at 16 px
+  // tall via cjkDrawMixed so layouts don't have to change shape.
+#ifdef CC_BUDDY_CJK_DISPLAY
+  cjkDrawMixed(&spr, tama.promptTool, 4, H - AREA + 14, p.text, p.bg);
+  // Single hint row at 16 px — clipped at the right edge if it overflows.
+  cjkDrawMixed(&spr, tama.promptHint, 4, H - AREA + 34, p.textDim, p.bg);
+#else
   // Size 2 only if it fits one line (~10 chars at 12px on 135px screen)
   int toolLen = strlen(tama.promptTool);
   spr.setTextColor(p.text, p.bg);
@@ -755,6 +766,7 @@ static void drawApproval() {
     spr.setCursor(4, H - AREA + 42);
     spr.printf("%.21s", tama.promptHint + 21);
   }
+#endif
 
   if (responseSent) {
     spr.setTextColor(p.textDim, p.bg);
@@ -893,7 +905,14 @@ void drawPet() {
 void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
+#ifdef CC_BUDDY_CJK_DISPLAY
+  // CJK glyphs are 16 px tall — no wrap; each transcript line gets its own
+  // visual row, clipped horizontally at the sprite edge. Skips wrapInto
+  // entirely because byte-based wrap math would split GBK pairs mid-codepoint.
+  const int SHOW = 3, LH = 16;
+#else
   const int SHOW = 3, LH = 8, WIDTH = 21;
+#endif
   const int AREA = SHOW * LH + 4;
   spr.fillRect(0, H - AREA, W, AREA, p.bg);
   spr.setTextSize(1);
@@ -901,12 +920,30 @@ void drawHUD() {
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
 
   if (tama.nLines == 0) {
+#ifdef CC_BUDDY_CJK_DISPLAY
+    cjkDrawMixed(&spr, tama.msg, 4, H - LH - 2, p.text, p.bg);
+#else
     spr.setTextColor(p.text, p.bg);
     spr.setCursor(4, H - LH - 2);
     spr.print(tama.msg);
+#endif
     return;
   }
 
+#ifdef CC_BUDDY_CJK_DISPLAY
+  // Each tama.lines[i] is rendered on its own row — no wrap, no display buffer.
+  uint8_t maxBack = (tama.nLines > SHOW) ? (tama.nLines - SHOW) : 0;
+  if (msgScroll > maxBack) msgScroll = maxBack;
+  int end = (int)tama.nLines - msgScroll;
+  int start = end - SHOW; if (start < 0) start = 0;
+  uint8_t newest = tama.nLines - 1;
+  for (int i = 0; start + i < end; i++) {
+    uint8_t row = start + i;
+    bool fresh = (row == newest) && (msgScroll == 0);
+    uint16_t color = fresh ? p.text : p.textDim;
+    cjkDrawMixed(&spr, tama.lines[row], 4, H - AREA + 2 + i * LH, color, p.bg);
+  }
+#else
   // Wrap all transcript lines into a flat display buffer. Track which
   // transcript index each display row came from, so we can dim older ones.
   static char disp[32][24];
@@ -931,6 +968,7 @@ void drawHUD() {
     spr.setCursor(4, H - AREA + 2 + i * LH);
     spr.print(disp[row]);
   }
+#endif
   if (msgScroll > 0) {
     spr.setTextColor(p.body, p.bg);
     spr.setCursor(W - 18, H - LH - 2);
