@@ -4,23 +4,61 @@
 // TFT_eSprite is exposed via M5StickCPlus.h (which pulls in the bundled
 // TFT_eSPI library); we don't have a direct lib_deps entry for TFT_eSPI.
 #include <M5StickCPlus.h>
-#include "Fonts/ASC12.h"        // 6x12 ASCII   (Fusion Pixel Font, OFL)
-#include "Fonts/GB2312_L1.h"    // 12x12 GB2312 (Fusion Pixel Font, OFL)
+#include "Fonts/ASC12.h"        // 6x12 ASCII (Fusion Pixel Font, OFL)
+
+// Codec dispatch. CC_BUDDY_CJK_CODEC_GBK and CC_BUDDY_CJK_CODEC_SJIS are
+// mutually exclusive build flags set by platformio.ini per variant. If
+// neither is defined we default to GBK so the legacy
+// -DCC_BUDDY_CJK_DISPLAY=1-alone build still works.
+#if !defined(CC_BUDDY_CJK_CODEC_GBK) && !defined(CC_BUDDY_CJK_CODEC_SJIS)
+#define CC_BUDDY_CJK_CODEC_GBK 1
+#endif
+
+#if defined(CC_BUDDY_CJK_CODEC_GBK)
+#include "Fonts/GB2312_L1.h"    // 12x12 GB2312 zones 1-55 (Fusion Pixel Font, OFL)
+#elif defined(CC_BUDDY_CJK_CODEC_SJIS)
+#include "Fonts/JIS208.h"       // 12x12 JIS X 0208 rows 1-47 (Fusion Pixel Font, OFL)
+#endif
 
 // Width/height per glyph family. ASCII chars are half a CJK slot wide; both
 // share the 12 px row height so the cursor math stays trivial and the HUD
-// area shrinks back to ~52 px (vs 68 px for the previous 16 px variant).
+// area is 4*12+4 = 52 px regardless of codec.
 static const int ASC_W = 6;
-static const int GBK_W = 12;
+static const int CJK_W = 12;
 static const int GLYPH_H = 12;
 
-// True iff the two bytes starting at `p` form a valid GBK pair (both in
-// 0xA1..0xFE). GB2312 Level 1 hanzi all live in that range; symbols and
-// pinyin in zones 1-9 too, but we ship only zones 16-55 so anything else
-// falls through to the '?' replacement below.
-static inline bool isGbkLead(const uint8_t* p) {
+// True iff the two bytes starting at `p` form a valid double-byte ideograph
+// pair for the configured codec. Single-byte half-width forms (SJIS kana
+// 0xA1..0xDF) deliberately fall through to the ASCII path — drawAsc12
+// silently drops them since they're outside the printable-ASCII slot range.
+static inline bool isCjkLead(const uint8_t* p) {
   const uint8_t b1 = p[0], b2 = p[1];
+#if defined(CC_BUDDY_CJK_CODEC_GBK)
+  // GB2312: both bytes in 0xA1..0xFE. Level 1 hanzi + zones 1-9 symbols both
+  // fit this; zones outside our shipped range return nullptr from the lookup.
   return b1 >= 0xA1 && b1 <= 0xFE && b2 >= 0xA1 && b2 <= 0xFE;
+#elif defined(CC_BUDDY_CJK_CODEC_SJIS)
+  // Shift_JIS lead: 0x81..0x9F or 0xE0..0xFC. Trail: 0x40..0x7E or 0x80..0xFC.
+  if (!((b1 >= 0x81 && b1 <= 0x9F) || (b1 >= 0xE0 && b1 <= 0xFC))) return false;
+  if (b2 < 0x40 || b2 == 0x7F || b2 > 0xFC) return false;
+  return true;
+#endif
+}
+
+static inline const uint8_t* codecGlyph(uint8_t b1, uint8_t b2) {
+#if defined(CC_BUDDY_CJK_CODEC_GBK)
+  return gb2312_l1_glyph(b1, b2);
+#elif defined(CC_BUDDY_CJK_CODEC_SJIS)
+  return sjis_glyph(b1, b2);
+#endif
+}
+
+static inline int codecBytesPerRow() {
+#if defined(CC_BUDDY_CJK_CODEC_GBK)
+  return GB2312_L1_BYTES_PER_ROW;
+#elif defined(CC_BUDDY_CJK_CODEC_SJIS)
+  return JIS208_BYTES_PER_ROW;
+#endif
 }
 
 // Blit a bitmap glyph onto the sprite. `glyph` is row-major: rows of
@@ -61,18 +99,18 @@ static void drawAsc12(TFT_eSprite* spr, uint8_t c, int x, int y,
             ASC12_BYTES_PER_ROW, color, bgcolor);
 }
 
-static void drawGb2312(TFT_eSprite* spr, uint8_t b1, uint8_t b2, int x, int y,
-                       uint16_t color, uint16_t bgcolor) {
-  const uint8_t* glyph = gb2312_l1_glyph(b1, b2);
+static void drawCjk(TFT_eSprite* spr, uint8_t b1, uint8_t b2, int x, int y,
+                    uint16_t color, uint16_t bgcolor) {
+  const uint8_t* glyph = codecGlyph(b1, b2);
   if (glyph == nullptr) {
-    // Outside our zone range (Level 2 hanzi, UDA, or invalid pair) — fall
-    // back to two '?' chars to flag the gap without leaving an empty slot.
+    // Outside our shipped row range (Level 2 kanji / GB2312 Level 2 / UDA / invalid)
+    // — fall back to two '?' chars to flag the gap without leaving an empty slot.
     drawAsc12(spr, '?', x,         y, color, bgcolor);
     drawAsc12(spr, '?', x + ASC_W, y, color, bgcolor);
     return;
   }
-  blitGlyph(spr, glyph, x, y, GBK_W, GLYPH_H,
-            GB2312_L1_BYTES_PER_ROW, color, bgcolor);
+  blitGlyph(spr, glyph, x, y, CJK_W, GLYPH_H,
+            codecBytesPerRow(), color, bgcolor);
 }
 
 void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
@@ -86,9 +124,9 @@ void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
   while (*p) {
     int glyph_w;
     int advance;
-    bool is_gbk = isGbkLead(p);
-    if (is_gbk) {
-      glyph_w = GBK_W;
+    bool is_cjk = isCjkLead(p);
+    if (is_cjk) {
+      glyph_w = CJK_W;
       advance = 2;
     } else if (*p == '\n' || *p == '\r') {
       p++;
@@ -98,7 +136,7 @@ void cjkDrawMixed(TFT_eSprite* spr, const char* text, int x, int y,
       advance = 1;
     }
     if (cx + glyph_w > max_right) break;
-    if (is_gbk) drawGb2312(spr, p[0], p[1], cx, y, color, bgcolor);
+    if (is_cjk) drawCjk(spr, p[0], p[1], cx, y, color, bgcolor);
     else        drawAsc12(spr, *p, cx, y, color, bgcolor);
     cx += glyph_w;
     p  += advance;
@@ -116,8 +154,8 @@ uint8_t cjkWrapInto(const char* in, char out[][CJK_ROW_CAP],
   while (*p && row < maxRows) {
     int glyph_w;
     int advance;
-    if (isGbkLead(p)) {
-      glyph_w = GBK_W;
+    if (isCjkLead(p)) {
+      glyph_w = CJK_W;
       advance = 2;
     } else if (*p == '\n' || *p == '\r') {
       // Newline forces a wrap *now*, then skip the literal byte.
@@ -168,7 +206,7 @@ int cjkMeasureMixed(const char* text) {
   const uint8_t* p = reinterpret_cast<const uint8_t*>(text);
   int w = 0;
   while (*p) {
-    if (isGbkLead(p)) { w += GBK_W; p += 2; }
+    if (isCjkLead(p)) { w += CJK_W; p += 2; }
     else if (*p == '\n' || *p == '\r') { p++; }
     else { w += ASC_W; p += 1; }
   }
