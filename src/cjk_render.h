@@ -1,4 +1,4 @@
-// Sprite-aware mixed ASCII + GBK glyph renderer for the CJK build variant.
+// Sprite-aware mixed ASCII + ideograph renderer for the CJK build variants.
 //
 // M5Display ships writeHzk()/writeHzkAsc()/writeHzkGbk(), but those only work
 // when drawing to M5.Lcd — they touch protected TFT_eSPI state that the
@@ -6,9 +6,15 @@
 // same sprite the GIF character renders into, so this module re-implements
 // the glyph-blit path against the public sprite API (drawPixel / fillRect).
 //
-// Font sources:
-//   - ASCII bytes (< 0x80)                   → ASC16 (8x16, bundled with M5StickCPlus)
-//   - GBK pairs   (b1 in 0xA1-0xFE, b2 too)  → GB2312_L1.h (zones 16-55, 3760 glyphs)
+// Codec is selected at build time via mutually-exclusive flags:
+//   -DCC_BUDDY_CJK_CODEC_GBK  → GB2312 zones 1-55 (Simplified Chinese)
+//   -DCC_BUDDY_CJK_CODEC_SJIS → JIS X 0208 rows 1-47 (Japanese)
+// If neither is set the renderer defaults to GBK for backwards compat.
+//
+// Font sources (all Fusion Pixel Font 12px monospaced, SIL OFL 1.1):
+//   - ASCII bytes (< 0x80)              → ASC12.h    (6x12, 128 glyphs)
+//   - GBK   pairs (0xA1..0xFE, 0xA1..0xFE) → GB2312_L1.h (12x12)
+//   - SJIS  pairs (0x81..0x9F | 0xE0..0xFC, valid trail) → JIS208.h (12x12)
 //
 // Only compiled when `CC_BUDDY_CJK_DISPLAY` is defined (fork-only build).
 
